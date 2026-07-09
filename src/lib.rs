@@ -3,7 +3,9 @@
  * Core library for QuantumTrades
  */
 
-use log::{info, error};
+use log::info;
+
+pub mod fxmacrodata;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -16,11 +18,11 @@ pub fn run(verbose: bool) -> Result<()> {
     } else {
         env_logger::init();
     }
-    
+
     info!("Starting QuantumTrades processing");
-    
+
     // Add your implementation here
-    
+
     info!("Processing completed successfully");
     Ok(())
 }
@@ -28,7 +30,7 @@ pub fn run(verbose: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_run() {
         assert!(run(false).is_ok());
