@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+pub const API_KEY_HEADER: &str = "X-API-Key";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FxMacroDataEndpoint {
     DataCatalogue,
@@ -52,7 +54,7 @@ impl FxMacroDataRequest {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct FxMacroDataClient {
     base_url: String,
     api_key: Option<String>,
@@ -76,18 +78,31 @@ impl FxMacroDataClient {
     pub fn with_base_url(api_key: Option<String>, base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_owned(),
-            api_key,
+            api_key: api_key.filter(|key| !key.trim().is_empty()),
         }
+    }
+
+    /// Header sent with each request, or `None` when no key is set.
+    pub fn api_key_header(&self) -> Option<(&'static str, &str)> {
+        self.api_key.as_deref().map(|key| (API_KEY_HEADER, key))
     }
 
     pub fn fetch_json(&self, request: FxMacroDataRequest) -> crate::Result<Value> {
         let url = self.build_url(&request)?;
-        let response = if matches!(request.endpoint, FxMacroDataEndpoint::Graphql)
-            || (matches!(request.endpoint, FxMacroDataEndpoint::Custom) && request.body.is_some())
-        {
-            ureq::post(&url).send_json(request.body.unwrap_or(Value::Null))?
+        let is_post = matches!(request.endpoint, FxMacroDataEndpoint::Graphql)
+            || (matches!(request.endpoint, FxMacroDataEndpoint::Custom) && request.body.is_some());
+        let mut http = if is_post {
+            ureq::post(&url)
         } else {
-            ureq::get(&url).call()?
+            ureq::get(&url)
+        };
+        if let Some((name, key)) = self.api_key_header() {
+            http = http.set(name, key);
+        }
+        let response = if is_post {
+            http.send_json(request.body.unwrap_or(Value::Null))?
+        } else {
+            http.call()?
         };
         Ok(response.into_json()?)
     }
@@ -113,13 +128,7 @@ impl FxMacroDataClient {
     }
 
     pub fn build_url(&self, request: &FxMacroDataRequest) -> crate::Result<String> {
-        let mut params = request.params.clone();
-        if let Some(api_key) = &self.api_key {
-            if !params.iter().any(|(key, _)| key == "api_key") {
-                params.push(("api_key".to_owned(), api_key.clone()));
-            }
-        }
-
+        let params = &request.params;
         let mut url = format!("{}{}", self.base_url, self.path(request)?);
         if !params.is_empty() {
             url.push('?');
@@ -222,6 +231,15 @@ impl FxMacroDataClient {
     }
 }
 
+impl std::fmt::Debug for FxMacroDataClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FxMacroDataClient")
+            .field("base_url", &self.base_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
 fn segment(value: &Option<String>, name: &str) -> crate::Result<String> {
     value
         .as_deref()
@@ -248,7 +266,7 @@ mod tests {
     use super::{FxMacroDataClient, FxMacroDataEndpoint, FxMacroDataRequest};
 
     #[test]
-    fn builds_authenticated_macro_urls() {
+    fn builds_macro_urls_without_key() {
         let client = FxMacroDataClient::with_base_url(
             Some("test-key".to_owned()),
             "https://api.fxmacrodata.com/v1/",
@@ -258,7 +276,17 @@ mod tests {
 
         assert_eq!(
             client.build_url(&request).unwrap(),
-            "https://api.fxmacrodata.com/v1/predictions/usd/non_farm_payrolls?limit=1&api_key=test-key"
+            "https://api.fxmacrodata.com/v1/predictions/usd/non_farm_payrolls?limit=1"
+        );
+        assert_eq!(client.api_key_header(), Some(("X-API-Key", "test-key")));
+    }
+
+    #[test]
+    fn omits_header_without_key() {
+        assert_eq!(FxMacroDataClient::new(None).api_key_header(), None);
+        assert_eq!(
+            FxMacroDataClient::new(Some(String::new())).api_key_header(),
+            None
         );
     }
 
@@ -272,7 +300,7 @@ mod tests {
 
         assert_eq!(
             client.build_url(&request).unwrap(),
-            "https://api.fxmacrodata.com/v1/rate_differentials/eur/usd?tenor=2y&api_key=test-key"
+            "https://api.fxmacrodata.com/v1/rate_differentials/eur/usd?tenor=2y"
         );
     }
 }
