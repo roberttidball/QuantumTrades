@@ -52,6 +52,19 @@ impl FxMacroDataRequest {
             body: None,
         }
     }
+
+    /// Select one page of a list endpoint. List endpoints return 20 rows by
+    /// default and at most 100 per request, newest first; request the next
+    /// page with the response's `pagination.next_offset` while
+    /// `pagination.has_more` is true.
+    pub fn page(mut self, limit: u32, offset: u32) -> Self {
+        self.params
+            .retain(|(key, _)| key != "limit" && key != "offset");
+        self.params
+            .push(("limit".to_owned(), limit.clamp(1, 100).to_string()));
+        self.params.push(("offset".to_owned(), offset.to_string()));
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -279,6 +292,17 @@ mod tests {
             "https://api.fxmacrodata.com/v1/predictions/usd/non_farm_payrolls?limit=1"
         );
         assert_eq!(client.api_key_header(), Some(("X-API-Key", "test-key")));
+    }
+
+    #[test]
+    fn page_sets_limit_and_offset() {
+        let client = FxMacroDataClient::new(None);
+        let request = client.forex("EUR", "USD").page(500, 200);
+
+        assert_eq!(
+            client.build_url(&request).unwrap(),
+            "https://api.fxmacrodata.com/v1/forex/eur/usd?limit=100&offset=200"
+        );
     }
 
     #[test]
